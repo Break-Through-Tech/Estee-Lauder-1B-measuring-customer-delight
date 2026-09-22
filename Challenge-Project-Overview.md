@@ -104,7 +104,7 @@ The following resources will help your team understand the problem space and pot
 **Code Examples:**
 - [Difference-in-Differences Python Notebook](https://github.com/matheusfacure/python-causality-handbook/blob/master/causal-inference-for-the-brave-and-true/13-Difference-in-Differences.ipynb)
 - [Panel Data and Fixed Effects Python Notebook](https://github.com/matheusfacure/python-causality-handbook/blob/master/causal-inference-for-the-brave-and-true/14-Panel-Data-and-Fixed-Effects.ipynb)
-- [notebooks/simple_did_demo.ipynb](notebooks/simple_did_demo.ipynb) — a short setup aid I put together for this project, covering pandas, plotting, and statsmodels formula syntax on a small unrelated toy example. It is not a demonstration of the project analysis; you are expected to design, write, validate, and interpret your own.
+- [notebooks/scratch/simple_did_demo.ipynb](notebooks/scratch/simple_did_demo.ipynb) — a short setup aid I put together for this project, covering pandas, plotting, and statsmodels formula syntax on a small unrelated toy example. It is not a demonstration of the project analysis; you are expected to design, write, validate, and interpret your own.
 
 *Feel free to explore beyond these, and share anything interesting you find with me!*
 
