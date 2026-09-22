@@ -1,29 +1,13 @@
-"""Difference-in-Differences helpers for the fragrance-advisor project.
+"""Simple-DiD helpers for the fragrance-advisor project (Milestone #3).
 
-Milestone #3 work lives in notebooks/simple_did/, one notebook per GitHub issue. The
-analysis itself lives here rather than in those notebooks, for the same reason
-eda_viz.py exists: when the per-task notebooks are folded into did_final.ipynb,
-the final notebook should *call* this code, not paste a second copy of it.
-
-    pre_post_split(df)                  weeks before / from the launch week
-    fit_error(a, b, kind)               rmse | mse | mae between two series
-    pre_trend_slopes(df)                per-market pre-launch slope (issue #19)
-    rank_pre_period_fit(df)             issues #17/#19 -- candidate controls
-    naive_estimate(df)                  issue #21 -- before/after in the US
-    manual_did(df, control=...)         issue #22 -- 2x2 ATT, four group means
-    save_estimate(...) / load_estimates()   issue #23 -- the shared registry
-
-Data loading is deliberately re-exported from eda_viz instead of redefined, so
-there is exactly one implementation of "where is the repo root" in the project.
-
-Two lines to use any of it from a notebook:
+Analysis lives here rather than in notebooks/simple_did/ so did_final.ipynb can call
+it later instead of pasting a second copy, the way eda_final.ipynb reuses eda_viz.
 
     import sys; sys.path.append("../../src")
     import simple_did as sd
 
-Milestone #3 asks that the control be justified on PRE-LAUNCH DATA ONLY. Every
-selection helper here (pre_trend_slopes, rank_pre_period_fit) therefore filters
-to the pre period internally -- do not hand them a post-launch frame.
+Control selection must use PRE-LAUNCH DATA ONLY; the selection helpers filter to the
+pre period internally, so don't hand them a post-launch frame.
 """
 
 from __future__ import annotations
@@ -31,64 +15,52 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 
+import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 
-from eda_viz import PILOT, METRIC, find_repo_root, launch_week, load_panel
+from eda_viz import (
+    METRIC,
+    METRIC_LABEL,
+    PILOT,
+    THEMES,
+    find_repo_root,
+    launch_week,
+    load_panel,
+)
 
 __all__ = [
-    "PILOT",
-    "METRIC",
-    "find_repo_root",
-    "load_panel",
-    "launch_week",
-    "pre_post_split",
-    "fit_error",
-    "pre_trend_slopes",
-    "rank_pre_period_fit",
-    "naive_estimate",
-    "manual_did",
-    "ESTIMATE_COLUMNS",
-    "estimates_path",
-    "save_estimate",
-    "load_estimates",
+    "PILOT", "METRIC", "find_repo_root", "load_panel", "launch_week",
+    "pre_post_split", "fit_error", "pre_trend_slopes", "rank_pre_period_fit",
+    "LAUNCH_CONTEXT", "smf_ols", "fit_market_model", "pre_trend_test",
+    "pre_trend_bias_bound", "plot_model_fit", "plot_slope_comparison",
+    "naive_estimate", "manual_did", "ESTIMATE_COLUMNS", "estimates_path",
+    "save_estimate", "load_estimates",
 ]
 
+LAUNCH_CONTEXT = ["paid_media_index", "promo_intensity", "new_visitor_share"]
 
-# --- period handling -------------------------------------------------------
+
 def pre_post_split(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Split the panel at the launch week into (pre, post).
-
-    The launch week itself counts as post: it is the first week the advisor was
-    actually reachable, so it belongs to the treated period even if only part of
-    that week was exposed. Anticipation in the weeks *before* launch is a
-    separate question -- Milestone #5, not this one.
-
-    Uses digital_feature_available via launch_week(), not post_launch.
-    post_launch is 1 for every market and marks *when*, not *where*.
-    """
+    """Split at the launch week; the launch week itself counts as post."""
     launch = launch_week(df)
     return df[df["week_start"] < launch].copy(), df[df["week_start"] >= launch].copy()
 
 
-# --- error metrics ---------------------------------------------------------
+def smf_ols(formula: str, data: pd.DataFrame, maxlags: int = 8):
+    """OLS with Newey-West errors -- weekly revenue is serially correlated."""
+    import statsmodels.formula.api as smf
+
+    return smf.ols(formula, data=data).fit(cov_type="HAC", cov_kwds={"maxlags": maxlags})
+
+
+# --- control selection -----------------------------------------------------
 def fit_error(a: pd.Series, b: pd.Series, kind: str = "mae") -> float:
-    """Distance between two aligned series.
+    """Distance between two aligned series: rmse | mse | mae.
 
-    Issue #17 asks for MSE "to tolerate outliers". Worth knowing before you pick:
-
-        rmse  sqrt(mean(d**2))  squares errors, then undoes the square -- same
-                                units as the metric
-        mse   mean(d**2)        squares errors -- a strictly increasing function
-                                of rmse, so it *ranks markets identically to
-                                rmse*, and it weights outlier weeks more, not
-                                less
-        mae   mean(|d|)         absolute errors -- this is the one that tolerates
-                                outlier weeks, because a bad week contributes in
-                                proportion to its size rather than its square
-
-    So if the goal is genuinely robustness to a few odd weeks, mae is the choice;
-    mse and rmse hand you the same ranking as each other. Default is mae for that
-    reason -- pass kind explicitly to compare, and report which you used.
+    Issue #17: rmse = sqrt(mse), so mse ranks markets *identically* to rmse and
+    weights outlier weeks more, not less. mae is the outlier-tolerant one, hence
+    the default.
     """
     d = (a - b).dropna()
     if d.empty:
@@ -103,28 +75,18 @@ def fit_error(a: pd.Series, b: pd.Series, kind: str = "mae") -> float:
     raise ValueError(f"Unknown error kind {kind!r}; use rmse, mse or mae.")
 
 
-# --- control selection (pre-launch evidence only) --------------------------
 def pre_trend_slopes(df: pd.DataFrame, metric: str = METRIC) -> pd.DataFrame:
-    """Pre-launch trend slope per market, in metric units per week.
-
-    Milestone #3 slide 7: a market at a similar *level* to the US is not thereby
-    a good control -- what matters is whether it was moving the same way before
-    launch. Comparing slopes is the check that distinguishes the two. Read this
-    next to rank_pre_period_fit(): a small error with a very different slope is
-    the classic bad control.
-    """
+    """Unconditional pre-launch slope per market, in metric units per week."""
     pre, _ = pre_post_split(df)
-    rows = []
-    for market, g in pre.groupby("market"):
-        rows.append(
-            {
-                "market": market,
-                "pre_slope": float(g[metric].cov(g["week_index"]) / g["week_index"].var()),
-                "pre_mean": float(g[metric].mean()),
-            }
-        )
-    out = pd.DataFrame(rows).sort_values("pre_slope", ascending=False)
-    return out.reset_index(drop=True)
+    rows = [
+        {
+            "market": market,
+            "pre_slope": float(g[metric].cov(g["week_index"]) / g["week_index"].var()),
+            "pre_mean": float(g[metric].mean()),
+        }
+        for market, g in pre.groupby("market")
+    ]
+    return pd.DataFrame(rows).sort_values("pre_slope", ascending=False).reset_index(drop=True)
 
 
 def rank_pre_period_fit(
@@ -133,22 +95,11 @@ def rank_pre_period_fit(
     kind: str = "mae",
     pilot: str = PILOT,
 ) -> pd.DataFrame:
-    """Rank candidate control markets by pre-launch fit to the pilot.
+    """Rank candidate controls by pre-launch fit to the pilot (issues #17/#19).
 
-    Issues #17 and #19. One row per non-pilot market, carrying every check the
-    Milestone #3 deck asks for so the choice can be defended on more than one
-    number:
-
-        level_corr   Pearson r on levels (slide 7: "co-movement, e.g. Pearson r")
-        delta_corr   Pearson r on week-over-week changes -- the one that speaks
-                     to parallel trends, since levels can correlate through
-                     shared seasonality alone
-        pre_<kind>   chosen error metric against the pilot
-        slope_gap    pilot slope minus market slope; near zero is parallel
-        gap_sd       volatility of the pilot-minus-market gap; smaller is steadier
-
-    Sorted by the error metric, but the columns disagree past first place on
-    purpose -- say in the write-up which column you sorted by and why.
+    Columns disagree past first place on purpose -- delta_corr and slope_gap speak
+    to parallel trends, while levels can correlate on shared seasonality alone. Say
+    in the write-up which one you sorted by.
     """
     pre, _ = pre_post_split(df)
     wide = pre.pivot(index="week_start", columns="market", values=metric)
@@ -157,33 +108,265 @@ def rank_pre_period_fit(
     deltas = wide.diff()
     slopes = pre_trend_slopes(df, metric).set_index("market")["pre_slope"]
 
-    rows = []
-    for market in wide.columns:
-        if market == pilot:
-            continue
-        rows.append(
-            {
-                "market": market,
-                "level_corr": wide[pilot].corr(wide[market]),
-                "delta_corr": deltas[pilot].corr(deltas[market]),
-                f"pre_{kind}": fit_error(wide[pilot], wide[market], kind),
-                "slope_gap": float(slopes[pilot] - slopes[market]),
-                "gap_sd": float((wide[pilot] - wide[market]).std()),
-                "pre_mean": float(wide[market].mean()),
-            }
-        )
-    out = pd.DataFrame(rows).sort_values(f"pre_{kind}")
-    return out.reset_index(drop=True)
+    rows = [
+        {
+            "market": market,
+            "level_corr": wide[pilot].corr(wide[market]),
+            "delta_corr": deltas[pilot].corr(deltas[market]),
+            f"pre_{kind}": fit_error(wide[pilot], wide[market], kind),
+            "slope_gap": float(slopes[pilot] - slopes[market]),
+            "gap_sd": float((wide[pilot] - wide[market]).std()),
+            "pre_mean": float(wide[market].mean()),
+        }
+        for market in wide.columns
+        if market != pilot
+    ]
+    return pd.DataFrame(rows).sort_values(f"pre_{kind}").reset_index(drop=True)
+
+
+# --- parallel-trends evidence (issue #18) ----------------------------------
+def fit_market_model(
+    df: pd.DataFrame,
+    market: str,
+    metric: str = METRIC,
+    seasonal: bool = True,
+    maxlags: int = 8,
+):
+    """Pre-launch model for one market: linear trend, optionally plus month effects.
+
+    A bare line explains ~4% of US pre-launch variation because eda_final section 2's
+    seasonality dominates; month effects take it to ~65%.
+    """
+    pre, _ = pre_post_split(df)
+    d = pre[pre["market"] == market].copy()
+    d["month"] = d["week_start"].dt.month
+    return smf_ols(f"{metric} ~ week_index" + (" + C(month)" if seasonal else ""), d, maxlags)
+
+
+def pre_trend_test(
+    df: pd.DataFrame,
+    control: str,
+    treated: str = PILOT,
+    metric: str = METRIC,
+    log: bool = False,
+    covariates: list[str] | None = None,
+    seasonal: bool = True,
+    cov_type: str = "HAC",
+    maxlags: int = 8,
+) -> dict:
+    """Were treated and control on different pre-launch trends? (issue #18)
+
+    Fits `y ~ week_index * is_treated [+ C(month)] [+ covariates]` on pre-launch
+    weeks. The interaction is the difference in weekly slopes; parallel implies zero.
+
+    Caveats that matter:
+    - p > 0.05 is a failure to detect, not proof of none. Read the CI, and see
+      pre_trend_bias_bound for what it fails to exclude.
+    - p-values here are indicative only. On pairs of markets that were *both*
+      untreated this rejects 13% (trend only) / 33% (with month effects) of the
+      time against a correct 5%, so the analytic errors are too small even with
+      HAC. Trust the slope estimates over the stars.
+    - Don't cluster on market: two clusters degenerates the estimator and returns
+      a CI collapsed onto the point estimate with p = 0.000.
+    - Don't use C(month)*is_treated on two markets -- it flags 10 of 15 untreated
+      pairs.
+    - Common seasonality cancels in the difference, so `seasonal` buys precision,
+      not a different answer.
+    - `log=True` tests parallel *percent* trends; `covariates` changes the question
+      to "parallel given these", and anything the rollout moved is post-treatment.
+    """
+    pre, _ = pre_post_split(df)
+    d = pre[pre["market"].isin([treated, control])].copy()
+    if d["market"].nunique() < 2:
+        raise ValueError(f"Need both {treated!r} and {control!r} in the pre period.")
+    d["is_treated"] = (d["market"] == treated).astype(int)
+    d["month"] = d["week_start"].dt.month
+
+    rhs = "week_index * is_treated"
+    if seasonal:
+        rhs += " + C(month)"
+    if covariates:
+        rhs += " + " + " + ".join(covariates)
+    lhs = f"np.log({metric})" if log else metric
+
+    import statsmodels.formula.api as smf
+
+    fit_kw = {"cov_type": cov_type}
+    if cov_type == "HAC":
+        fit_kw["cov_kwds"] = {"maxlags": maxlags}
+    model = smf.ols(f"{lhs} ~ {rhs}", data=d).fit(**fit_kw)
+
+    term = "week_index:is_treated"
+    ci = model.conf_int().loc[term]
+    # Slopes come from THIS model so they subtract to the difference beside them.
+    base = float(model.params["week_index"])
+    return {
+        "treated": treated,
+        "control": control,
+        "metric": metric,
+        "scale": "log" if log else "levels",
+        "seasonal": seasonal,
+        "cov_type": cov_type,
+        "covariates": list(covariates) if covariates else [],
+        "slope_diff": float(model.params[term]),
+        "std_err": float(model.bse[term]),
+        "ci_low": float(ci[0]),
+        "ci_high": float(ci[1]),
+        "p_value": float(model.pvalues[term]),
+        "n_weeks": int(d["week_index"].nunique()),
+        "treated_slope": base + float(model.params[term]),
+        "control_slope": base,
+        "model": model,
+    }
+
+
+def pre_trend_bias_bound(
+    df: pd.DataFrame,
+    control: str,
+    treated: str = PILOT,
+    metric: str = METRIC,
+    seasonal: bool = True,
+    cov_type: str = "HAC",
+    maxlags: int = 8,
+) -> dict:
+    """How much of the DiD an undetected pre-trend could account for (issue #18).
+
+    A slope gap d compounds into the 2x2 DiD through the distance between the mean
+    post week and the mean pre week, since the DiD differences period means:
+
+        spurious_did = d * (mean_post_week - mean_pre_week)
+
+    Evaluated at the CI ends, that is the effect the pre-trend evidence fails to
+    exclude. Compare it with the ATT before calling parallel trends satisfied.
+    """
+    pre, post = pre_post_split(df)
+    lever = float(post["week_index"].mean() - pre["week_index"].mean())
+    test = pre_trend_test(df, control=control, treated=treated, metric=metric,
+                          seasonal=seasonal, cov_type=cov_type, maxlags=maxlags)
+    att = manual_did(df, control=control, treated=treated, metric=metric)["estimate"]
+
+    out = {"treated": treated, "control": control, "lever_weeks": lever,
+           "att": att, "p_value": test["p_value"], "cov_type": cov_type}
+    for label in ("point", "ci_low", "ci_high"):
+        slope = test["slope_diff"] if label == "point" else test[label]
+        out[f"{label}_slope"] = slope
+        out[f"{label}_spurious_did"] = slope * lever
+        out[f"{label}_share_of_att"] = slope * lever / att if att else float("nan")
+    return out
+
+
+# --- charts ----------------------------------------------------------------
+def _style(ax, t):
+    ax.set_facecolor(t["surface"])
+    ax.grid(True, color=t["grid"], lw=0.6, alpha=0.8)
+    ax.set_axisbelow(True)
+    for s in ("top", "right"):
+        ax.spines[s].set_visible(False)
+    for s in ("left", "bottom"):
+        ax.spines[s].set_color(t["grid"])
+    ax.tick_params(colors=t["muted"], labelsize=8)
+
+
+def plot_model_fit(
+    df: pd.DataFrame,
+    control: str,
+    treated: str = PILOT,
+    metric: str = METRIC,
+    seasonal: bool = True,
+    theme: str = "light",
+):
+    """Observed vs fitted, pre-launch, one panel per market.
+
+    Slide 1 of #18: the panels share a seasonal shape at different levels.
+    """
+    t = THEMES[theme]
+    pre, _ = pre_post_split(df)
+    fig, axes = plt.subplots(2, 1, figsize=(9, 6.5), sharex=True)
+
+    for ax, market, colour in zip(axes, (treated, control), (t["accent"], t["compare"])):
+        d = pre[pre["market"] == market].sort_values("week_index")
+        fit = fit_market_model(df, market, metric, seasonal)
+        ax.plot(d["week_index"], d[metric], lw=1.0, alpha=0.45, color=colour,
+                label="observed")
+        ax.plot(d["week_index"], fit.fittedvalues, lw=2.0, color=colour,
+                label=f"fitted  (slope {fit.params['week_index']:+.5f}/wk, "
+                      f"adj R2={fit.rsquared_adj:.2f})")
+        ax.set_title(market, color=t["ink"], fontsize=11, loc="left", pad=8)
+        _style(ax, t)
+        ax.legend(frameon=False, fontsize=8.5, labelcolor=t["ink_2"], loc="upper left")
+
+    axes[-1].set_xlabel("week index (pre-launch only)", color=t["ink_2"], fontsize=9)
+    fig.supylabel(METRIC_LABEL, color=t["ink_2"], fontsize=9)
+    fig.patch.set_facecolor(t["surface"])
+    fig.tight_layout()
+    return fig
+
+
+def plot_slope_comparison(
+    df: pd.DataFrame,
+    control: str,
+    treated: str = PILOT,
+    metric: str = METRIC,
+    seasonal: bool = True,
+    theme: str = "light",
+):
+    """Each market's pre-launch slope with CI, plus the difference.
+
+    Slide 2 of #18. All three rows come from one pooled model so they reconcile:
+    control is week_index, treated adds the interaction, the difference IS the
+    interaction. Separate per-market fits would not subtract correctly.
+    """
+    t = THEMES[theme]
+    pre, _ = pre_post_split(df)
+    d = pre[pre["market"].isin([treated, control])].copy()
+    d["is_treated"] = (d["market"] == treated).astype(int)
+    d["month"] = d["week_start"].dt.month
+    fit = smf_ols(f"{metric} ~ week_index * is_treated" + (" + C(month)" if seasonal else ""), d)
+
+    names = list(fit.params.index)
+    term = "week_index:is_treated"
+
+    def contrast(week=0.0, interaction=0.0):
+        vec = np.zeros(len(names))
+        vec[names.index("week_index")] = week
+        vec[names.index(term)] = interaction
+        res = fit.t_test(vec)
+        lo, hi = res.conf_int()[0]
+        return float(res.effect[0]), float(lo), float(hi)
+
+    rows = [
+        (treated, *contrast(week=1, interaction=1), t["accent"]),
+        (control, *contrast(week=1), t["compare"]),
+        (f"difference\n({treated} - {control})", *contrast(interaction=1), t["ink"]),
+    ]
+
+    fig, ax = plt.subplots(figsize=(8, 3.4))
+    for i, (label, est, lo, hi, colour) in enumerate(rows):
+        y = len(rows) - 1 - i
+        ax.plot([lo, hi], [y, y], lw=2.4, color=colour, solid_capstyle="round")
+        ax.plot([est], [y], "o", ms=7, color=colour, zorder=3)
+    ax.axvline(0, color=t["muted"], lw=1.0, ls="--", zorder=0)
+
+    ax.set_yticks(range(len(rows)))
+    ax.set_yticklabels([r[0] for r in reversed(rows)], fontsize=9, color=t["ink_2"])
+    ax.set_xlabel(f"pre-launch slope ({metric} per week), 95% CI",
+                  color=t["ink_2"], fontsize=9)
+    ax.set_title("Pre-launch trends are not measurably different",
+                 color=t["ink"], fontsize=12, loc="left", pad=12)
+    _style(ax, t)
+    ax.spines["left"].set_visible(False)
+    ax.grid(False, axis="y")
+    fig.patch.set_facecolor(t["surface"])
+    fig.tight_layout()
+    return fig
 
 
 # --- estimates -------------------------------------------------------------
 def naive_estimate(df: pd.DataFrame, market: str = PILOT, metric: str = METRIC) -> dict:
-    """Before/after change in the pilot market, ignoring every other market.
+    """Before/after change in the pilot, ignoring every other market (issue #21).
 
-    Issue #21, deck slide 4 top line. This is the estimate we expect to be
-    *wrong*: it credits the advisor with everything that changed between the two
-    periods, including seasonality, paid media and promotions. Its job is to be
-    the baseline the DiD improves on, so report it plainly rather than burying it.
+    Expected to overstate: it credits the advisor with seasonality, paid media and
+    promotions too. Its job is to be the baseline the DiD improves on.
     """
     pre, post = pre_post_split(df)
     pre_mean = pre.loc[pre["market"] == market, metric].mean()
@@ -203,21 +386,12 @@ def manual_did(
     treated: str = PILOT,
     metric: str = METRIC,
 ) -> dict:
-    """Hand-computed 2x2 difference-in-differences ATT.
-
-    Issue #22, deck slide 5. Returns the four group means alongside the ATT so
-    the arithmetic is auditable -- a reader should be able to check the
-    subtraction without rerunning anything:
+    """Hand-computed 2x2 DiD ATT (issue #22).
 
         att = (treated_post - treated_pre) - (control_post - control_pre)
 
-    The ATT is the causal quantity the deck asks for (slide 3): the effect on the
-    market that actually got the feature, which is the one the rollout decision
-    turns on.
-
-    No standard error here on purpose. Getting one right means accounting for
-    serial correlation within a market across weeks -- that is the regression /
-    fixed-effects DiD's job in Milestone #4, not this function's.
+    Returns the four group means so the arithmetic is auditable. No standard error:
+    that needs serial-correlation handling, which is Milestone #4's job.
     """
     pre, post = pre_post_split(df)
 
@@ -229,9 +403,6 @@ def manual_did(
 
     t_pre, t_post = mean_of(pre, treated), mean_of(post, treated)
     c_pre, c_post = mean_of(pre, control), mean_of(post, control)
-
-    treated_change = t_post - t_pre
-    control_change = c_post - c_pre
     return {
         "treated": treated,
         "control": control,
@@ -240,34 +411,22 @@ def manual_did(
         "treated_post": t_post,
         "control_pre": c_pre,
         "control_post": c_post,
-        "treated_change": treated_change,
-        "control_change": control_change,
-        "estimate": treated_change - control_change,
+        "treated_change": t_post - t_pre,
+        "control_change": c_post - c_pre,
+        "estimate": (t_post - t_pre) - (c_post - c_pre),
     }
 
 
-# --- the shared results registry -------------------------------------------
-# Issue #23. Every estimate any of us produces lands in one CSV with one schema,
-# so Milestone #4's "compare to earlier estimations" is a groupby rather than an
-# archaeology dig.
+# Issue #23: one schema for every estimate, so Milestone #4's comparison is a lookup.
 ESTIMATE_COLUMNS = [
-    "method",         # naive | manual_did | regression_did | fe_did | ...
-    "treated",        # treated market
-    "control",        # control market, or "" where the method has none
-    "metric",         # outcome column from the panel
-    "window",         # which weeks were used, e.g. "all" or "-8..+8"
-    "estimate",       # the point estimate
-    "ci_low",         # leave blank where the method gives no interval
-    "ci_high",
-    "issue",          # GitHub issue number the estimate came from
-    "author",         # GitHub handle
-    "recorded_at",    # UTC timestamp, filled in automatically
-    "notes",          # caveats a reader needs in order to interpret the number
+    "method", "treated", "control", "metric", "window", "estimate",
+    "ci_low", "ci_high", "issue", "author", "recorded_at", "notes",
 ]
+_TEXT_COLUMNS = ["method", "treated", "control", "metric", "window",
+                 "author", "recorded_at", "notes"]
 
 
 def estimates_path() -> Path:
-    """Location of the shared registry, resolved from the repo root."""
     return find_repo_root() / "results" / "estimates.csv"
 
 
@@ -287,41 +446,25 @@ def save_estimate(
 ) -> pd.DataFrame:
     """Append one estimate to results/estimates.csv and return the full table.
 
-    Appending rather than overwriting is deliberate: re-running a notebook after
-    a tweak should add a row, so the history of what we tried survives. Prune
-    superseded rows by hand when a specification is genuinely abandoned.
+    Appends rather than overwrites, so re-running a notebook keeps the history of
+    what was tried. Prune superseded rows by hand.
     """
     path = Path(path) if path else estimates_path()
     row = {
-        "method": method,
-        "treated": treated,
-        "control": control,
-        "metric": metric,
-        "window": window,
-        "estimate": estimate,
+        "method": method, "treated": treated, "control": control, "metric": metric,
+        "window": window, "estimate": estimate,
         "ci_low": "" if ci_low is None else ci_low,
         "ci_high": "" if ci_high is None else ci_high,
-        "issue": issue,
-        "author": author,
+        "issue": issue, "author": author,
         "recorded_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "notes": notes,
     }
     existing = load_estimates(path)
     new = pd.DataFrame([row])
-    # Concatenating onto an empty frame warns about dtype inference in pandas 2,
-    # and there is nothing to preserve in that case anyway.
-    out = new if existing.empty else pd.concat([existing, new], ignore_index=True)
-    out = out[ESTIMATE_COLUMNS]
+    out = (new if existing.empty else pd.concat([existing, new], ignore_index=True))[ESTIMATE_COLUMNS]
     path.parent.mkdir(parents=True, exist_ok=True)
     out.to_csv(path, index=False)
     return out
-
-
-# Columns that are prose, not numbers: a blank one means "not applicable", which
-# should survive a CSV round-trip as "" rather than turning into NaN.
-_TEXT_COLUMNS = [
-    "method", "treated", "control", "metric", "window", "author", "recorded_at", "notes",
-]
 
 
 def load_estimates(path: Path | None = None) -> pd.DataFrame:
