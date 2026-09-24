@@ -277,7 +277,13 @@ def plot_model_fit(
 ):
     """Observed vs fitted, pre-launch, one panel per market.
 
-    Slide 1 of #18: the panels share a seasonal shape at different levels.
+    Slide 1 of #18: each market fitted independently, so the shared seasonal shape
+    is a finding rather than something the model imposed. Reports fit quality only --
+    for slopes use pre_trend_test / plot_slope_comparison, which pool the markets so
+    the two slopes and their difference reconcile.
+
+    seasonal=False gives the plain linear-trend version (adj R2 ~0.04 US, ~0.01
+    Canada), which is the visual case for why month effects are needed.
     """
     t = THEMES[theme]
     pre, _ = pre_post_split(df)
@@ -288,9 +294,13 @@ def plot_model_fit(
         fit = fit_market_model(df, market, metric, seasonal)
         ax.plot(d["week_index"], d[metric], lw=1.0, alpha=0.45, color=colour,
                 label="observed")
+        # Deliberately no slope in this legend. These are per-market fits, each with
+        # its own seasonality, so their slopes would differ from -- and not subtract
+        # to -- the pooled figures reported by pre_trend_test and
+        # plot_slope_comparison. This panel makes a fit-quality claim; slopes belong
+        # to the pooled model.
         ax.plot(d["week_index"], fit.fittedvalues, lw=2.0, color=colour,
-                label=f"fitted  (slope {fit.params['week_index']:+.5f}/wk, "
-                      f"adj R2={fit.rsquared_adj:.2f})")
+                label=f"fitted  (adj R2 = {fit.rsquared_adj:.2f})")
         ax.set_title(market, color=t["ink"], fontsize=11, loc="left", pad=8)
         _style(ax, t)
         ax.legend(frameon=False, fontsize=8.5, labelcolor=t["ink_2"], loc="upper left")
