@@ -1,0 +1,28 @@
+{
+  "metric": "revenue_per_session",
+  "treated": "United States",
+  "control": "Canada",
+  "n_us_canada": 208,
+  "naive": 0.3420902564102568,
+  "canada_change": 0.09617641025641044,
+  "manual_2x2_did": 0.24591384615384637,
+  "simple_regression_did": {
+    "term": "pilot_market:post_launch",
+    "coef": 0.24591384615384407,
+    "std_err": 0.13584577668128833,
+    "p_value": 0.07025813504600663,
+    "ci_low": -0.02033898359335215,
+    "ci_high": 0.5121666759010403,
+    "nobs": 208
+  },
+  "two_way_fe_did": {
+    "term": "digital_feature_available",
+    "coef": 0.24591384615384715,
+    "std_err": 0.02958363168448473,
+    "p_value": 9.370911414768852e-17,
+    "ci_low": 0.18793099352035908,
+    "ci_high": 0.3038966987873352,
+    "nobs": 208
+  },
+  "covariance": "Newey-West / HAC with maxlags=8 via sd.smf_ols pattern"
+}
