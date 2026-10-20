@@ -1,0 +1,2 @@
+model,att_usd_per_session,ci_low,ci_high,n_obs,cov_type
+A_exclude_both_markets_last_2_weeks,0.2493125763125801,0.1779910231285482,0.320634129496612,204,HC3
