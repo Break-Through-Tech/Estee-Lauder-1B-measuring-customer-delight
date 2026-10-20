@@ -1,0 +1,3 @@
+window,n_weeks,mean_us_ca_gap,gap_std
+Earlier pre-launch (<= -3),63,0.2314412698412698,0.11026576492497807
+"Anticipation (-2, -1)",2,0.3419000000000003,0.12614784976368001
