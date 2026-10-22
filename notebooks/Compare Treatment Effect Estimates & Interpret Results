@@ -1,0 +1,63 @@
+import matplotlib.pyplot as plt
+import numpy as np
+
+# Final estimates from analysis
+methods = [
+    "Naive Before/After",
+    "Manual DiD",
+    "Regression DiD",
+    "Model A: Baseline FE",
+    "Model B: + Anticipation",
+    "Model C: + Marketing"
+]
+
+att = np.array([0.3421, 0.2459, 0.2459, 0.2459, 0.2493, 0.2093])
+
+# Corrected HC3 confidence intervals
+ci_low = [np.nan, np.nan, 0.1194, 0.1747, 0.1780, 0.1440]
+ci_high = [np.nan, np.nan, 0.3725, 0.3171, 0.3206, 0.2747]
+
+fig, ax = plt.subplots(figsize=(11, 5.5))
+y = np.arange(len(methods))
+
+for i in range(len(methods)):
+    color = "#E69F00" if i == 5 else "#3274A1"
+
+    if not np.isnan(ci_low[i]):
+        ax.errorbar(
+            att[i], y[i],
+            xerr=[[att[i] - ci_low[i]], [ci_high[i] - att[i]]],
+            fmt="o", color=color, capsize=5,
+            markersize=8, linewidth=2
+        )
+    else:
+        ax.scatter(att[i], y[i], color=color, s=75, zorder=3)
+
+    ax.text(att[i] + 0.012, y[i] - 0.17,
+            f"+${att[i]:.4f}", fontsize=9)
+
+ax.axhline(2.5, color="gray", linestyle=":", alpha=0.6)
+ax.axvline(0, color="gray", linestyle="--", alpha=0.5)
+
+ax.set_yticks(y)
+ax.set_yticklabels(methods)
+ax.invert_yaxis()
+ax.set_xlim(0, 0.43)
+
+ax.set_xlabel("Estimated RPS Lift ($ per Session)")
+ax.set_title("Comparing Treatment Effect Estimates", fontsize=15, pad=15)
+
+ax.grid(axis="x", alpha=0.15)
+ax.spines[["top", "right", "left"]].set_visible(False)
+
+fig.text(
+    0.12, 0.01,
+    "Horizontal lines = 95% HC3 confidence intervals; "
+    "naive and manual estimates have no reported CI.",
+    fontsize=9, color="gray"
+)
+
+plt.tight_layout(rect=[0, 0.05, 1, 1])
+plt.savefig("milestone5_estimate_comparison.png",
+            dpi=300, bbox_inches="tight")
+plt.show()
