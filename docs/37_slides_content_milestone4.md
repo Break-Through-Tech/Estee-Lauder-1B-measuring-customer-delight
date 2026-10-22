@@ -1,3 +1,5 @@
+> ⚠️ **Superseded.** The confidence intervals and p-values below use Newey-West/HAC errors. The corrected HC3 numbers are in [`../results/m5_results_and_interpretation.md`](../results/m5_results_and_interpretation.md) and [`../notebooks/regression_did/regression_did_hc3_and_anticipation.ipynb`](../notebooks/regression_did/regression_did_hc3_and_anticipation.ipynb). With HC3, the simple regression DiD CI no longer crosses zero.
+
 # Milestone #4 slide content — Regression DiD + two-way FE DiD
 
 ## Simple regression DiD (#29)
