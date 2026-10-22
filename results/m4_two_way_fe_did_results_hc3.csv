@@ -1,0 +1,2 @@
+method,treated,control,metric,window,estimate,std_err,ci_low,ci_high,p_value,issue,cov_type
+two_way_fe_did_hc3,United States,Canada,revenue_per_session,all_pre_vs_post,0.24591384615384998,0.03632304494209238,0.17472198625851915,0.3171057060491808,1.2861508075968525e-11,31,HC3

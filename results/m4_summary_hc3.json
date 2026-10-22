@@ -1,0 +1,55 @@
+{
+  "generated_at_utc": "2026-10-22T05:12:01Z",
+  "treated": "United States",
+  "control": "Canada",
+  "metric": "revenue_per_session",
+  "launch_week": "2026-04-06",
+  "naive_before_after": {
+    "market": "United States",
+    "metric": "revenue_per_session",
+    "pre_mean": 2.680927692307692,
+    "post_mean": 3.023017948717949,
+    "estimate": 0.3420902564102568,
+    "relative_lift": 0.12760144833141396
+  },
+  "manual_2x2_did": {
+    "treated": "United States",
+    "control": "Canada",
+    "metric": "revenue_per_session",
+    "treated_pre": 2.680927692307692,
+    "treated_post": 3.023017948717949,
+    "control_pre": 2.446087692307692,
+    "control_post": 2.5422641025641024,
+    "treated_change": 0.3420902564102568,
+    "control_change": 0.09617641025641044,
+    "estimate": 0.24591384615384637
+  },
+  "simple_regression_did": {
+    "method": "simple_regression_did_hc3",
+    "treated": "United States",
+    "control": "Canada",
+    "metric": "revenue_per_session",
+    "window": "all_pre_vs_post",
+    "estimate": 0.24591384615384332,
+    "std_err": 0.0645687842190271,
+    "ci_low": 0.11936135455901198,
+    "ci_high": 0.37246633774867466,
+    "p_value": 0.0001397805555573356,
+    "issue": 29,
+    "cov_type": "HC3"
+  },
+  "two_way_fe_did": {
+    "method": "two_way_fe_did_hc3",
+    "treated": "United States",
+    "control": "Canada",
+    "metric": "revenue_per_session",
+    "window": "all_pre_vs_post",
+    "estimate": 0.24591384615384998,
+    "std_err": 0.03632304494209238,
+    "ci_low": 0.17472198625851915,
+    "ci_high": 0.3171057060491808,
+    "p_value": 1.2861508075968525e-11,
+    "issue": 31,
+    "cov_type": "HC3"
+  }
+}

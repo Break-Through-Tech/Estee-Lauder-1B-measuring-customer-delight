@@ -430,10 +430,10 @@ def manual_did(
 # Issue #23: one schema for every estimate, so Milestone #4's comparison is a lookup.
 ESTIMATE_COLUMNS = [
     "method", "treated", "control", "metric", "window", "estimate",
-    "ci_low", "ci_high", "issue", "author", "recorded_at", "notes",
+    "ci_low", "ci_high", "issue", "recorded_at", "notes",
 ]
 _TEXT_COLUMNS = ["method", "treated", "control", "metric", "window",
-                 "author", "recorded_at", "notes"]
+                 "recorded_at", "notes"]
 
 
 def estimates_path() -> Path:
@@ -444,7 +444,6 @@ def save_estimate(
     method: str,
     estimate: float,
     issue: int | str,
-    author: str,
     treated: str = PILOT,
     control: str = "",
     metric: str = METRIC,
@@ -465,7 +464,7 @@ def save_estimate(
         "window": window, "estimate": estimate,
         "ci_low": "" if ci_low is None else ci_low,
         "ci_high": "" if ci_high is None else ci_high,
-        "issue": issue, "author": author,
+        "issue": issue,
         "recorded_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "notes": notes,
     }
